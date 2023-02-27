@@ -4,16 +4,16 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 import sys
-sys.path.append(".")
-sys.path.append("..")
+sys.path.append("/mnt/workplace/blurHand")
 from net.NET_HG.net_hg import Net_HM_HG
 from utils.linear_model import LinearModel
 from net.HMR.config import cfg
 from utils.resnet import resnet34, resnet50
 from utils.layer import Conv1dLayer
 from utils.v2v import V2FModel
+from utils.util_loss import normalize, proj_func
 from utils import op, volumetric
-from utils.manopth.manopth.manolayer import ManoLayer
+from utils.manopth.manolayer import ManoLayer
 from utils.utils_net import compute_uv_from_integral
 from pytorch3d.structures import Meshes
 from pytorch3d.renderer import (
@@ -135,6 +135,7 @@ class HMR_SV(nn.Module):
     def __init__(self):
         super(HMR_SV, self).__init__()
 
+        self.device = torch.device(cfg.device)
         self.num_param = 61
         self.max_batch_size = 300
         if cfg.pretrained:
@@ -167,9 +168,12 @@ class HMR_SV(nn.Module):
             num_iters  =3,
             max_batch_size=self.max_batch_size
         )
-
-        self.mano = ManoLayer(side='right', mano_root="/root/workplace/backup/blurhand/model", use_pca=False)
+        self.mano = ManoLayer(side='right', mano_root="/mnt/workplace/blurHand/models/", use_pca=False)
         self.rgb2hm = RGB2HM()
+
+        # ------loss
+        self.smoothl1_loss = torch.nn.SmoothL1Loss()
+        self.mse_loss = torch.nn.MSELoss()
 
     def compute_results(self, param):
         scale = param[:, 0].contiguous()    # [bs]    Scaling 
@@ -271,7 +275,9 @@ class HMR_SV(nn.Module):
 
         return coord_volumes
 
-    def forward(self, input, target_j3d):
+    def forward(self, input, target=None):
+        if target == None:
+            raise "Please assign target"
         if input.shape[3] != 256:
             pad = nn.ZeroPad2d(padding= (0, 32, 0, 32))
             input_hm = pad(input)
@@ -282,25 +288,49 @@ class HMR_SV(nn.Module):
         hm_keypt = compute_uv_from_integral(hm_list[-1], input.shape[2:4]) #[bs, 21, 3] (0, 224)
         output['hm_keypt'] = hm_keypt
         joint_coords, feature_xyz = self.posenet(img_feature, encoding[-1]) #[bs, 21, 3], [bs, 256, 64, 64, 64]
-        # joint_coords = self.posenet(img_feature) #[bs, 21, 3], [bs, 256, 64, 64, 64]
         feature_xyz = self.process_features(feature_xyz)
-        # # print("posenet")
-        # # GPUtil.showUtilization()
         regressor_feature, heatmap_3d = self.volume_net(feature_xyz)
-        # # print("volumenet")
-        # # GPUtil.showUtilization()
-        coord_volumes = self.get_volume(target_j3d, img_feature.shape[0], img_feature.device)
+        coord_volumes = self.get_volume(target['j3d'], img_feature.shape[0], img_feature.device)
         vol_joint_3d, _ = op.integrate_tensor_3d_with_coordinates(heatmap_3d * self.volume_multiplier, coord_volumes, softmax=self.volume_softmax)
         del _
         output['posenet_joint'] = joint_coords
         output['vol_joint'] = vol_joint_3d
+        # params = self.regressor(regressor_feature)
+        # joint, verts, faces, theta, beta, scale, trans, rvec, pose = self.compute_results(params[-1])
+        # output['joint'] = joint
+        # output['verts'] = verts
+        # output['faces'] = faces
+        # output['theta'] = theta
+        # output['beta'] = beta
+        # output['pose'] = pose
+        # output['scale'] = scale
+        # output['trans'] = trans
+        # output['rvec'] = rvec
+        # re_img, re_sil = self.rendering(verts, faces)
+        # re_sil = re_sil[:, :, :, 3]
+        # re_sil[re_sil != 0] = 1
+        # output['re_img'] = re_img
+        # output['re_sil'] = re_sil
 
-        return output
+        if self.training:
+            loss = {}
+            j3d_tar_norm = normalize(target['j3d'])
+            keypt_tar = proj_func(target['j3d'], target['Ks'])
+
+            loss['j3d_hm'] = self.mse_loss(normalize(output['posenet_joint']).to(self.device), j3d_tar_norm.to(self.device))
+            loss['j3d_vol'] = self.mse_loss(normalize(output['vol_joint']).to(self.device), j3d_tar_norm.to(self.device))
+            loss['j2d_hm'] = self.smoothl1_loss(output['hm_keypt'][:, :, :2].to(self.device), keypt_tar.to(self.device))
+            # loss['j3d'] = self.mse_loss(normalize(output['joint']).to(self.device), j3d_tar_norm.to(self.device))
+            # loss['mask'] = self.smoothl1_loss(output['re_sil'].to(self.device), target['mask'][:, 0, :, :].float().to(self.device))
+            # loss['reg'] = self.mse_loss(output['pose'], torch.zeros_like(output['pose']).to(self.device))
+            # loss['beta'] = self.mse_loss(output['beta'], torch.zeros_like(output['beta']).to(self.device))
+            
+            return loss
+        else:
+            return output
 
 if __name__ == "__main__":
     input = torch.randn(2, 3, 224, 224).to("cuda")
     target_3d = torch.randn(2, 21, 3).to("cuda")
     net = HMR_SV().to("cuda")
-    output = net(input, target_3d)
-    for k in output.keys():
-        print(output[k].shape)
+    print(net)

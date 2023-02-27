@@ -12,6 +12,7 @@ from PIL import Image
 import cv2
 import skimage.io as io
 import glob
+from utils import augmentation
 
 def get_dataset(dat_name, base_path, set_name = 'training'):
     if dat_name == 'FreiHAND':
@@ -26,6 +27,7 @@ class FreiHAND(Dataset):
         self.transform = torchvision.transforms.Compose([torchvision.transforms.Resize([224,224]), torchvision.transforms.ToTensor(), torchvision.transforms.Normalize(*mean_std)])
         self.load_dataset()
         self.name = "FreiHAND"
+        self.max_rot = np.pi
 
     def load_dataset(self):
         self.K_list = json_load(os.path.join(self.base_path, '%s_K.json'%self.set_name))
@@ -41,23 +43,53 @@ class FreiHAND(Dataset):
     def get_sample(self, idx):
         sample = {}
         image = self.get_img(idx)
-        sample['image'] = self.transform(image)
+        center = np.asarray([112,112])
+        scale = 224
+        rot = np.random.uniform(low=-self.max_rot, high=self.max_rot)
+        rot_mat = np.array(
+        [
+            [np.cos(rot), -np.sin(rot), 0],
+            [np.sin(rot), np.cos(rot), 0],
+            [0, 0, 1],
+        ]
+        ).astype(np.float32)
+        affinetrans, post_rot_trans = augmentation.get_affine_transform(
+            center, scale, [224, 224], rot=rot
+        )
+        trans_image = augmentation.transform_img(
+            image, affinetrans, [224, 224]
+        )
+        trans_img = self.totensor(trans_image).float()
+        sample['image'] = trans_img
         K = self.get_K(idx)
+        trans_Ks = post_rot_trans.dot(K)
         M = torch.FloatTensor([[1,0,0,0], [0,1,0,0], [0,0,1,0], [0,0,0,1]])
-        sample['Ks'] = K
+        sample['Ks'] = trans_Ks
         sample['Ms'] = M
-        sample['scale'] = self.hand_dataset.get_scale(idx)
+        sample['scale'] = self.get_scale(idx)
         if self.set_name == 'training':
-            j3d = self.hand_dataset.get_j3d(idx)
-            sample['j3d'] = j3d
-            verts = self.hand_dataset.get_verts(idx)
-            sample['vert'] = verts
-            mask = self.hand_dataset.get_mask(idx)
-            sample['mask'] = torch.round(self.totensor(mask))
+            j3d = self.get_j3d(idx)
+            trans_j3d = rot_mat.dot(
+                        j3d.transpose(1,0)
+                    ).transpose()
+            sample['j3d'] = trans_j3d
+            verts = self.get_verts(idx)
+            trans_verts = rot_mat.dot(
+                        verts.transpose(1,0)
+                    ).transpose()
+            sample['vert'] = trans_verts
+            mask = self.get_mask(idx)
+            trans_masks = augmentation.transform_img(
+                        mask, affinetrans, [224,224]
+                    )
+            trans_mask = torch.round(self.totensor(trans_masks))
+            sample['mask'] = trans_mask
         sample['idx'] = idx
-        sample['name'] = self.hand_dataset.name
-        img_idx = self.hand_dataset.get_filename(idx)
+        sample['name'] = self.name
+        img_idx = self.get_filename(idx)
         sample['filename'] = img_idx
+
+        return sample
 
     def __getitem__(self, idx):
         try:

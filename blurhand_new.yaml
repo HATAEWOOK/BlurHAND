@@ -206,12 +206,10 @@ dependencies:
     - imageio==2.22.4
     - importlib-resources==5.10.1
     - joblib==1.2.0
-    - manopth==0.0.1
     - mypy-extensions==0.4.3
     - networkx==2.8.8
     - omegaconf==2.2.3
     - opencv-python==4.6.0.66
-    - opendr==0.78
     - pandas==1.5.2
     - pathspec==0.10.2
     - protobuf==3.19.6
@@ -230,5 +228,4 @@ dependencies:
     - torchsummary==1.5.1
     - torchsummaryx==1.3.0
     - transforms3d==0.4.1
-    - trimesh==3.16.4
 prefix: /root/anaconda3/envs/blurhand_new

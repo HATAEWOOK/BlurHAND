@@ -1,10 +1,14 @@
+import sys
+sys.path.append('/mnt/workplace/blurHand')
 import torch
 from tqdm import tqdm
-from config import cfg
+from net.HMR.config import cfg
+# from net.SAR.config import cfg
 from base import Trainer
 import numpy as np
 import os
 import random
+from datetime import datetime
 import gc
 from torch.utils.tensorboard import SummaryWriter
 
@@ -15,7 +19,7 @@ def main():
     random.seed(cfg.manual_seed)
     torch.backends.cudnn.benchmark = True
     torch.backends.cudnn.enabled = True
-    os.environ["CUDA_VISIBLE_DEVICES"] = '0, 1'
+    os.environ["CUDA_VISIBLE_DEVICES"] = '0, 1, 2, 3'
     trainer = Trainer()
     trainer._make_model()
     trainer._make_batch_loader()
@@ -39,18 +43,24 @@ def main():
             input = sample['image']
             loss = trainer.model(input, target=sample)
             for k, v in loss.items():
-                loss_dict[k] += v.detach().cpu()
-            loss_sum = sum(loss[k] * cfg.loss_weight[k] for k in cfg.loss_queries)
+                v_mean = v.mean()
+                loss[k] = v_mean
+                loss_dict[k] += v_mean.detach().cpu()
+            if cfg.loss_weight is not None:
+                loss_sum = sum(loss[k] * cfg.loss_weight[k] for k in cfg.loss_queries)
+            else:
+                loss_sum = sum(loss[k] for k in cfg.loss_queries)
             loss_dict['total_loss'] += loss_sum
             loss_sum.backward()
             trainer.optimizer.step()
-            if iteration % cfg.print_iter == 0:
-                screen = ['[Epoch %d/%d]' % (epoch, cfg.total_epoch), '[Batch %d/%d]' % (iteration, len(trainer.train_loader))]
+            if (iteration+1) % cfg.print_iter == 0:
+                screen = ['[Epoch %d/%d]' % (epoch, cfg.total_epoch), '[Batch %d/%d]' % (iteration+1, len(trainer.train_loader))]
                 screen += ['[%s: %.4f]' % ('loss_' + k, v.detach()) for k, v in loss.items()]
                 trainer.logger.info(''.join(screen))
         #####End One-epoch
         for k, v in loss_dict.items():
-            writer.add_scalar('[Becnchmark][%s on %s] %s_loss'%(cfg.pre, cfg.dataset, k), v, epoch)
+            loss_dict[k]  = v / len(trainer.train_loader)
+            writer.add_scalar('[Becnchmark][%s on %s] %s_loss'%(cfg.pre, cfg.dataset, k), loss_dict[k], epoch)
             writer.flush()
             writer.close()
         trainer.schedule.step()

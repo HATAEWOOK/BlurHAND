@@ -1,8 +1,9 @@
 import sys
+sys.path.append('/mnt/workplace/blurHand')
 import torch
 import torch.nn
-from SAR.model import SAR
-from HMR.hmr_sv import HMR_SV
+from net.SAR.model import SAR
+from net.HMR.hmr_sv import HMR_SV
 
 def get_model(model_name):
     if model_name == "SAR":

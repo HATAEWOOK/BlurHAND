@@ -198,10 +198,6 @@ class V2FModel(nn.Module):
             Res3DBlock(32, 32),
         )
 
-        self.test_layers = nn.Sequential(
-            Basic3DBlock(input_channels, 32, 7),
-        )
-
         self.encoder_decoder = EncoderDecorder()
 
         self.back_layers = nn.Sequential(
