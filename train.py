@@ -1,9 +1,10 @@
 import sys
-sys.path.append('/mnt/workplace/blurHand')
+sys.path.append('/root/workplace/backup/blurHand')
 import torch
 from tqdm import tqdm
-from net.HMR.config import cfg
+# from net.HMR.config import cfg
 # from net.SAR.config import cfg
+from net.evalNet.config import cfg
 from base import Trainer
 import numpy as np
 import os

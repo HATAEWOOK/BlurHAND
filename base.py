@@ -6,7 +6,9 @@ import os
 from torch.utils.data import DataLoader
 from datetime import datetime
 import torch.optim as optim
-from net.HMR.config import cfg
+# from net.HMR.config import cfg
+# from net.SAR.config import cfg
+from net.evalNet.config import cfg
 from utils.logger import setup_logger
 from data.dataset import get_dataset
 from net.model import get_model
@@ -14,11 +16,12 @@ from net.model import get_model
 class Trainer:
     def __init__(self):
         self.device = torch.device(cfg.device)
-        cfg.output_root = '/mnt/workplace/blurHand/out/train/%s'%cfg.dataset
+        # cfg.output_root = '/mnt/workplace/blurHand/out/train/%s'%cfg.dataset
+        cfg.output_root = '/root/workplace/backup/blurHand/out/train/%s'%cfg.dataset
         today = datetime.strftime(datetime.now().replace(microsecond=0), '%Y-%m-%d')
         cfg.base_folder = os.path.join(cfg.output_root, "%s_%d"%(today, cfg.trial_num))
-        if os.path.exists(cfg.base_folder):
-            raise "Log Directory exist"
+        # if os.path.exists(cfg.base_folder):
+        #     raise "Log Directory exist"
         
         log_folder = os.path.join(cfg.base_folder, 'log')
         if not os.path.exists(log_folder):
@@ -99,17 +102,27 @@ class Trainer:
 
     def _make_batch_loader(self):
         dataset_path = "./data/DatasetPKL"
-        # if os.path.isfile(os.path.join(dataset_path, cfg.dataset, 'train_dataloader_%.2f.pkl'%cfg.split)):
-        if os.path.isfile(os.path.join(dataset_path, cfg.dataset, 'train_dataloader.pkl')):
+        if isinstance(cfg.split, float) and os.path.isfile(os.path.join(dataset_path, cfg.dataset, 'train_dataloader_%.2f.pkl'%cfg.split)):
+            self.logger.info("Loading dataloader...")
+            self.train_loader = torch.load(os.path.join(dataset_path, cfg.dataset, 'train_dataloader_%.2f.pkl'%cfg.split))
+            self.logger.info("The dataset is loaded successfully.")
+        elif isinstance(cfg.split, int) and os.path.isfile(os.path.join(dataset_path, cfg.dataset, 'train_dataloader_%d.pkl'%cfg.split)):
+            self.logger.info("Loading dataloader...")
+            self.train_loader = torch.load(os.path.join(dataset_path, cfg.dataset, 'train_dataloader_%d.pkl'%cfg.split))
+            self.logger.info("The dataset is loaded successfully.")
+        elif cfg.split is None and os.path.isfile(os.path.join(dataset_path, cfg.dataset, 'train_dataloader.pkl')):
             self.logger.info("Loading dataloader...")
             self.train_loader = torch.load(os.path.join(dataset_path, cfg.dataset, 'train_dataloader.pkl'))
             self.logger.info("The dataset is loaded successfully.")
         else:
             self.logger.info("Creating dataset...")
             dataset = get_dataset(cfg.dataset, cfg.dataset_path ,'training')
-            split = int(len(dataset) * cfg.split)
-            train_split, valid_split = torch.utils.data.random_split(dataset, [split, len(dataset) - split])
-            del valid_split
+            if isinstance(cfg.split, float): #split by ratio
+                split = int(len(dataset) * cfg.split)
+                train_split, valid_split = torch.utils.data.random_split(dataset, [split, len(dataset) - split])
+            elif isinstance(cfg.split, int): #split by length
+                split = cfg.split
+                train_split, valid_split = torch.utils.data.random_split(dataset, [split, len(dataset) - split])
             self.train_loader = DataLoader(train_split,                                       
                                         batch_size=cfg.batch_size,
                                         num_workers=cfg.num_worker,
@@ -117,14 +130,22 @@ class Trainer:
                                         pin_memory=True,
                                         drop_last=True)
 
-            # self.valid_loader = DataLoader(valid_split,
-            #                             batch_size=cfg.batch_size,
-            #                             num_workers=cfg.num_worker,
-            #                             shuffle=False,)
+            self.valid_loader = DataLoader(valid_split,
+                                        batch_size=cfg.batch_size,
+                                        num_workers=cfg.num_worker,
+                                        shuffle=False,)
             if not os.path.isdir(os.path.join(dataset_path, cfg.dataset)):
                 os.makedirs(os.path.join(dataset_path, cfg.dataset))
-            torch.save(self.train_loader, os.path.join(dataset_path, cfg.dataset, 'train_dataloader_%.2f.pkl'%cfg.split))
-            # torch.save(self.valid_loader, os.path.join(dataset_path, cfg.dataset, 'valid_dataloader_%.02f.pkl'%(1-cfg.split)))
+
+            if isinstance(split, float):
+                torch.save(self.train_loader, os.path.join(dataset_path, cfg.dataset, 'train_dataloader_%.2f.pkl'%cfg.split))
+                torch.save(self.valid_loader, os.path.join(dataset_path, cfg.dataset, 'valid_dataloader_%.02f.pkl'%(1-cfg.split)))
+            elif isinstance(split, int):
+                torch.save(self.train_loader, os.path.join(dataset_path, cfg.dataset, 'train_dataloader_%d.pkl'%cfg.split))
+                torch.save(self.valid_loader, os.path.join(dataset_path, cfg.dataset, 'valid_dataloader_%d.pkl'%(len(dataset)-cfg.split)))
+            elif split is None:
+                torch.save(self.train_loader, os.path.join(dataset_path, cfg.dataset, 'train_dataloader.pkl'))
+                torch.save(self.valid_loader, os.path.join(dataset_path, cfg.dataset, 'valid_dataloader.pkl'))
             self.logger.info("The dataset is created successfully.")
         
     def _make_model(self):
