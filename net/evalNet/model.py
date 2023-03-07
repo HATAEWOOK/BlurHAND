@@ -323,7 +323,7 @@ class ResNet_Mano(nn.Module):
         output['theta'] = theta
         output['beta'] = beta
 
-        verts, joint = self.mano(torch.concat([rot,theta], dim=1),th_betas = beta)
+        verts, joint = self.mano(torch.concat([theta, rot], dim=1), th_betas = beta)
         # verts = x3d[:, 21:, :]
         # joint = x3d[:, :21, :]
         output['vert'] = verts
@@ -361,7 +361,7 @@ class ResNet_Mano(nn.Module):
 def resnet34_Mano(pretrained=False, **kwargs):
     
     model = ResNet_Mano(BasicBlock, [3, 4, 6, 3], **kwargs)    
-    model.fc = nn.Linear(512 * 1, 45)
+    model.fc = nn.Linear(512 * 1, 61)
 
     return model
 

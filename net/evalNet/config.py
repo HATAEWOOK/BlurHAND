@@ -5,9 +5,12 @@ class Config(object):
         self.manual_seed = 77
         self.trial_num = 0
         self.pre = 'evalNet'
-        self.dataset = 'FreiHAND'
-        self.dataset_path = '/root/workplace/ssd/dataset/freiHand_dataset'
-        self.split = 7420
+        # self.dataset = 'FreiHAND'
+        # self.dataset_path = '/root/workplace/ssd/dataset/freiHand_dataset'
+        self.dataset = 'blurHand'
+        self.dataset_path = '/root/workplace/ssd/dataset/blurhand_new'
+        # self.split = 7420
+        self.split = None
         self.device = "cuda"
         self.use_multigpu = True
         # network

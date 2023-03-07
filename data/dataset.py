@@ -12,6 +12,7 @@ from PIL import Image
 import cv2
 import skimage.io as io
 import glob
+import pickle
 from utils import augmentation
 from utils.util_loss import normalize
 
@@ -21,6 +22,9 @@ def get_dataset(dat_name, base_path, set_name = 'training'):
     
     if dat_name == 'blurHand':
         return blurHand(base_path)
+    
+    if dat_name == 'RHD':
+        return RHD(base_path, set_name)
 
 class FreiHAND(Dataset):
     def __init__(self, base_path, set_name):
@@ -245,6 +249,30 @@ class blurHand(Dataset):
     
     def __len__(self):
         return len(self.xyz_list)
+    
+class RHD(Dataset):
+    def __init__(self, base_path, set_name):
+        self.base_path = base_path
+        self.set_name = set_name
+        self.totensor = torchvision.transforms.ToTensor()
+        mean_std = None #Todo
+        self.transform = torchvision.transforms.Compose([torchvision.transforms.Resize([224,224]), torchvision.transforms.ToTensor(), torchvision.transforms.Normalize(*mean_std)])
+        self.load_dataset()
+        self.name = "RHD"
+
+    def load_dataset(self):
+        with open(os.path.join(self.base_path, self.set_name, 'anno_%s.pickle' % self.set_name), 'rb') as fi:
+            self.anno_all = pickle.load(fi)
+
+    def get_sample(self, idx):
+        sample={}
+        sample['image'] = None
+        sample['Ks'] = None
+        sample['j3d'] = None
+        sample['keypt'] = None
+        sample['mask'] = None
+        sample['idx'] = idx
+        sample['name'] = self.name
 
 
 def _assert_exist(p):

@@ -71,6 +71,7 @@ def main():
             prev_lr = cur_lr
         if loss_dict['total_loss'].data.item() < best_loss:
             trainer.save_model(trainer.model, trainer.optimizer, trainer.schedule, epoch)
+            best_loss = loss_dict['total_loss'].data.item()
         
 if __name__ == '__main__':
     main()
