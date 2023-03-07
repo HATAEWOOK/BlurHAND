@@ -10,6 +10,7 @@ from net.HMR.config import cfg
 from utils.logger import setup_logger
 from data.dataset import get_dataset
 from net.model import get_model
+import matplotlib.pyplot as plt
 
 class Trainer:
     def __init__(self):
@@ -46,23 +47,24 @@ class Trainer:
             self.logger.info('Load model from {}'.format(cfg.checkpoint))
             state = {k[len("module."):]:v for k, v in checkpoint['net'].items()}
             model.load_state_dict(state)
-            optimizer.load_state_dict(checkpoint['optimizer'])
-            schedule.load_state_dict(checkpoint['schedule'])
-            start_epoch = checkpoint['last_epoch'] + 1
-            cfg.total_epoch += checkpoint['last_epoch']
+            if cfg.continue_train:
+                optimizer.load_state_dict(checkpoint['optimizer'])
+                schedule.load_state_dict(checkpoint['schedule'])
+                start_epoch = checkpoint['last_epoch'] + 1
+                cfg.total_epoch += checkpoint['last_epoch']
             self.logger.info('Model loaded')
         return start_epoch, model
 
     def load_pretrained(self, model, mode='front'):
         if cfg.pretrained_net is not None:
-            if mode == 'front':
-                state = torch.load(cfg.pretrained_net)
-                volumenet_decoder_state = {k[len("vt_net.volume_net.encoder_decoder."):]:v for k, v in state.items() if 'volume_net' in k and 'encoder_decoder' in k and '.decoder_' in k}
-                volumenet_backlayers_state = {k[len("vt_net.volume_net."):]:v for k, v in state.items() if 'volume_net' in k and 'back_layers' in k}
-                volumenet_outputlayer_state = {k[len("vt_net.volume_net."):]:v for k, v in state.items() if 'volume_net' in k and 'output_layer' in k}
-                volumenet_backlayers_state.update(volumenet_outputlayer_state)
-                model.volume_net.encoder_decoder.load_state_dict(volumenet_decoder_state, strict=False)
-                model.volume_net.load_state_dict(volumenet_backlayers_state, strict=False)
+            state = torch.load(cfg.pretrained_net)
+            volumenet_decoder_state = {k[len("vt_net.volume_net.encoder_decoder."):]:v for k, v in state.items() if 'volume_net' in k and 'encoder_decoder' in k and '.decoder_' in k}
+            volumenet_backlayers_state = {k[len("vt_net.volume_net."):]:v for k, v in state.items() if 'volume_net' in k and 'back_layers' in k}
+            volumenet_outputlayer_state = {k[len("vt_net.volume_net."):]:v for k, v in state.items() if 'volume_net' in k and 'output_layer' in k}
+            volumenet_backlayers_state.update(volumenet_outputlayer_state)
+            model.volume_net.encoder_decoder.load_state_dict(volumenet_decoder_state, strict=False)
+            model.volume_net.load_state_dict(volumenet_backlayers_state, strict=False)
+            if cfg.freeze:
                 for name, param in model.named_parameters():
                     if 'volume_net' in name and 'encoder_decoder' in name and '.decoder_' in name:
                         param.requires_grad = False
@@ -70,14 +72,15 @@ class Trainer:
                     if 'volume_net' in name and ('back_layers' in name or 'output_layer' in name):
                         param.requires_grad = False
                         print(name, param.requires_grad)
-            elif mode == 'back':
+            if mode == 'back':
                 state = torch.load(cfg.pretrained_net)
-                regressor_state = {k[len("vt_net.regressor."):]:v for k, v in state.items() if 'regressor' in k}
+                regressor_state = {k[len("regressor."):]:v for k, v in state.items() if 'regressor' in k and 'mano' not in k}
                 model.regressor.load_state_dict(regressor_state)
-                for name, param in model.named_parameters():
-                    if 'regressor' not in name:
-                        param.requires_grad = False
-                        print(name, param.requires_grad)
+                if cfg.freeze:
+                    for name, param in model.named_parameters():
+                        if 'regressor' not in name:
+                            param.requires_grad = False
+                            print(name, param.requires_grad)
 
 
 
@@ -137,7 +140,7 @@ class Trainer:
         else:
             start_epoch = 1
         if cfg.pretrained_net:
-            model = self.load_pretrained(model)
+            model = self.load_pretrained(model, mode='back')
         model.train()
         self.model = model
         if cfg.use_multigpu:
@@ -150,7 +153,8 @@ class Trainer:
 
 class Tester:
     def __init__(self):
-        cfg.output_root = './valid/%s'%cfg.dataset
+        self.device = torch.device(cfg.device)
+        cfg.output_root = '/mnt/workplace/blurHand/out/valid/%s'%cfg.dataset
         today = datetime.strftime(datetime.now().replace(microsecond=0), '%Y-%m-%d')
         cfg.base_folder = os.path.join(cfg.output_root, "%s_%d"%(today, cfg.trial_num))
         if os.path.exists(cfg.base_folder):
@@ -160,7 +164,7 @@ class Tester:
         if not os.path.exists(log_folder):
             os.makedirs(log_folder)
         logfile = os.path.join(log_folder, 'eval_' + cfg.experiment_name + '.log')
-        with open(os.path.join(log_folder, 'train_' + cfg.experiment_name + '.yaml')) as fw:
+        with open(os.path.join(log_folder, 'eval_' + cfg.experiment_name + '.yaml'), "w") as fw:
             yaml.safe_dump(vars(cfg), fw, default_flow_style=False)
 
         self.logger = setup_logger(output=logfile, name="%s_valid"%cfg.pre)
@@ -168,7 +172,7 @@ class Tester:
 
     def _make_batch_loader(self):
         dataset_path = "./data/DatasetPKL"
-        if os.path.isfile(os.path.join(dataset_path, cfg.dataset, 'train_dataloader.pkl')) and os.path.isfile(os.path.join(dataset_path, cfg.dataset, 'valid_dataloader.pkl')):
+        if os.path.isfile(os.path.join(dataset_path, cfg.dataset, 'valid_dataloader.pkl')):
             self.logger.info("Loading dataloader...")
             self.valid_loader = torch.load(os.path.join(dataset_path, cfg.dataset, 'valid_dataloader.pkl'))
             self.logger.info("The dataset is loaded successfully.")
@@ -178,22 +182,40 @@ class Tester:
     def load_model(self, model):
         self.logger.info('Loading the model from {}...'.format(cfg.checkpoint))
         checkpoint = torch.load(cfg.checkpoint)
-        model.load_state_dict(checkpoint['net'])
+        state = {k[len("module."):]:v for k, v in checkpoint['net'].items()}
+        model.load_state_dict(state, strict=False)
         self.logger.info('The model is loaded successfully.')
+        return model
+    
+    def load_pretrained(self, model, mode='front'):
+        if cfg.pretrained_net is not None:
+            state = torch.load(cfg.pretrained_net)
+            volumenet_decoder_state = {k[len("vt_net.volume_net.encoder_decoder."):]:v for k, v in state.items() if 'volume_net' in k and 'encoder_decoder' in k and '.decoder_' in k}
+            volumenet_backlayers_state = {k[len("vt_net.volume_net."):]:v for k, v in state.items() if 'volume_net' in k and 'back_layers' in k}
+            volumenet_outputlayer_state = {k[len("vt_net.volume_net."):]:v for k, v in state.items() if 'volume_net' in k and 'output_layer' in k}
+            volumenet_backlayers_state.update(volumenet_outputlayer_state)
+            model.volume_net.encoder_decoder.load_state_dict(volumenet_decoder_state, strict=False)
+            model.volume_net.load_state_dict(volumenet_backlayers_state, strict=False)
+            if mode == 'back':
+                regressor_state = {k[len("regressor."):]:v for k, v in state.items() if 'regressor' in k and 'mano' not in k}
+                model.regressor.load_state_dict(regressor_state)
         return model
 
     def _make_model(self):
         self.logger.info("Making the model...")
-        model = get_model().to(self.device)
+        model = get_model(cfg.pre)
         model = self.load_model(model)
+        if cfg.pretrained_net is not None:
+            model = self.load_pretrained(model, mode='back')
         model.eval()
-        self.model = model
+        self.model = model.cpu()
         self.logger.info("The model is made successfully.")
 
-    def _evaluate(self, outs, meta_info, cur_sample_idx):
-        eval_result = self.dataset.evaluate(outs, meta_info, cur_sample_idx)
-        return eval_result
-
-    def _print_eval_result(self, eval_result):
-        self.dataset.print_eval_result(eval_result)
-        self.logger.info("The evaluation is done successfully.")
+    def visualization(self, out, iter, image):
+        vis_path = os.path.join(cfg.base_folder, 'vis')
+        if not os.path.exists(vis_path):
+            os.makedirs(vis_path)
+        fig = plt.figure()
+        plt.imshow(image[0].permute(1, 2, 0).cpu().numpy())
+        plt.imshow(out['re_img'][0].cpu().numpy())
+        fig.savefig(os.path.join(vis_path, '%s_vis.png'%iter))
