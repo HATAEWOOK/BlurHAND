@@ -12,11 +12,19 @@ from PIL import Image
 import cv2
 import skimage.io as io
 import glob
+import pickle
 from utils import augmentation
+from utils.util_loss import normalize
 
 def get_dataset(dat_name, base_path, set_name = 'training'):
     if dat_name == 'FreiHAND':
         return FreiHAND(base_path, set_name)
+    
+    if dat_name == 'blurHand':
+        return blurHand(base_path)
+    
+    if dat_name == 'RHD':
+        return RHD(base_path, set_name)
 
 class FreiHAND(Dataset):
     def __init__(self, base_path, set_name):
@@ -156,6 +164,116 @@ class FreiHAND(Dataset):
 
     def __len__(self):
         return len(self.prefixs)
+    
+class blurHand(Dataset):
+    def __init__(self, base_path):
+        self.base_path = base_path
+        self.totensor = torchvision.transforms.ToTensor()
+        mean_std = ([0.4532, 0.4522, 0.4034], [0.2485, 0.2418, 0.2795])
+        self.transform = torchvision.transforms.Compose([torchvision.transforms.Resize([224,224]), torchvision.transforms.ToTensor(), torchvision.transforms.Normalize(*mean_std)])
+        self.load_dataset()
+        self.name = "blurHand"
+
+    def load_dataset(self):
+        self.K_sharp_list = json_load(os.path.join(self.base_path, 'calib_k.json'))['mas']
+        self.K_blur_list = json_load(os.path.join(self.base_path, 'calib_k.json'))['sub1']
+        self.ext_sharp_list = json_load(os.path.join(self.base_path, 'calib_ext.json'))['mas']
+        self.ext_blur_list = json_load(os.path.join(self.base_path, 'calib_ext.json'))['sub1']
+        self.mano_list = json_load(os.path.join(self.base_path, 'mano.json'))
+        self.xyz_list = json_load(os.path.join(self.base_path, 'xyz.json'))
+        self.mp_keypt_list = json_load(os.path.join(self.base_path, 'mp_mas.json'))
+
+    def get_sample(self, idx):
+        sample={}
+        simg = self.get_sharp_img(idx)
+        sample['image'] = self.totensor(simg).float()
+        bimg = self.get_blur_img(idx)
+        sample['bimage'] = self.totensor(bimg).float()
+        sample['Ks'] = self.get_sharp_K(idx)
+        sample['Ext'] = self.get_sharp_ext(idx)
+        sample['bKs'] = self.get_blur_K(idx)
+        sample['bExt'] = self.get_blur_ext(idx)
+        sample['j3d'] = self.get_xyz(idx)
+        sample['mask'] = torch.round(self.totensor(self.get_mask(idx)))
+        sample['idx'] = idx
+        sample['name'] = self.name
+
+        return sample
+    
+    def __getitem__(self, idx):
+        try:
+            sample = self.get_sample(idx)
+        except ExecError:
+            raise "Error at {}".format(idx)
+        return sample
+
+    def get_sharp_img(self, idx):
+        img = Image.open(os.path.join(self.base_path, 'rgb', 'mas', '%05d.jpg'%idx)).convert('RGB')
+        return img
+    
+    def get_blur_img(self, idx):
+        img = Image.open(os.path.join(self.base_path, 'rgb', 'sub1', '%05d.jpg'%idx)).convert('RGB')
+        return img
+    
+    def get_mask(self, idx):
+        mask = Image.open(os.path.join(self.base_path, 'mask', 'mas', '%05d.jpg'%idx))
+        return mask
+    
+    def get_sharp_K(self, idx):
+        K = self.K_sharp_list[idx]
+        return torch.FloatTensor(K)
+    
+    def get_blur_K(self, idx):
+        K = self.K_blur_list[idx]
+        return torch.FloatTensor(K)
+    
+    def get_sharp_ext(self, idx):
+        ext = self.ext_sharp_list[idx]
+        return torch.FloatTensor(ext)
+    
+    def get_blur_ext(self, idx):
+        ext = self.ext_blur_list[idx]
+        return torch.FloatTensor(ext)
+    
+    def get_mano(self, idx):
+        mano = self.mano_list[idx]
+        return torch.FloatTensor(mano)
+    
+    def get_xyz(self, idx):
+        xyz = self.xyz_list[idx]
+        return torch.FloatTensor(xyz)
+    
+    def get_keypt(self, idx):
+        keypt = self.mp_keypt_list[idx]
+        return torch.FloatTensor(keypt)
+    
+    def __len__(self):
+        return len(self.xyz_list)
+    
+class RHD(Dataset):
+    def __init__(self, base_path, set_name):
+        self.base_path = base_path
+        self.set_name = set_name
+        self.totensor = torchvision.transforms.ToTensor()
+        mean_std = None #Todo
+        self.transform = torchvision.transforms.Compose([torchvision.transforms.Resize([224,224]), torchvision.transforms.ToTensor(), torchvision.transforms.Normalize(*mean_std)])
+        self.load_dataset()
+        self.name = "RHD"
+
+    def load_dataset(self):
+        with open(os.path.join(self.base_path, self.set_name, 'anno_%s.pickle' % self.set_name), 'rb') as fi:
+            self.anno_all = pickle.load(fi)
+
+    def get_sample(self, idx):
+        sample={}
+        sample['image'] = None
+        sample['Ks'] = None
+        sample['j3d'] = None
+        sample['keypt'] = None
+        sample['mask'] = None
+        sample['idx'] = idx
+        sample['name'] = self.name
+
 
 def _assert_exist(p):
     msg = 'File does not exists: %s' % p

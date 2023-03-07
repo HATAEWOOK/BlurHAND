@@ -1,9 +1,10 @@
 import sys
-sys.path.append('/mnt/workplace/blurHand')
+sys.path.append('/root/workplace/backup/blurHand')
 import torch
 from tqdm import tqdm
-from net.HMR.config import cfg
+# from net.HMR.config import cfg
 # from net.SAR.config import cfg
+from net.evalNet.config import cfg
 from base import Trainer
 import numpy as np
 import os
@@ -70,6 +71,7 @@ def main():
             prev_lr = cur_lr
         if loss_dict['total_loss'].data.item() < best_loss:
             trainer.save_model(trainer.model, trainer.optimizer, trainer.schedule, epoch)
+            best_loss = loss_dict['total_loss'].data.item()
         
 if __name__ == '__main__':
     main()
